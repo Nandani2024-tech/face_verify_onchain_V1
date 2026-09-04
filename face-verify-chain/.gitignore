@@ -1,0 +1,38 @@
+# Environment & Secrets (Never commit credentials)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# OS & Editor Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Blockchain & Solc Build Artifacts
+blockchain_module/RecordVerification_abi.json
+blockchain_module/contracts/*.bin
+blockchain_module/contracts/*.abi
+blockchain_module/build/
+.solcx/
+
+# Sample Photos (Ignore local test photos, keep directory via .gitkeep)
+samples/*
+!samples/.gitkeep
+
