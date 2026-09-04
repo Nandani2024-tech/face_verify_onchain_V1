@@ -10,20 +10,17 @@ End-to-end demo pipeline:
   3. Blockchain     -> hash the matched post, upload the fingerprint to
                         Ethereum Sepolia testnet, then re-verify it on-chain
 
-A single local image drives the whole pipeline — no separate public URL
-is needed; Google Cloud Vision accepts the image bytes directly.
-
 Usage:
   python pipeline.py --face samples/my_photo.jpg
-
-Requires a .env file (see .env.example) with:
-  GOOGLE_VISION_API_KEY, RPC_URL, PRIVATE_KEY, CONTRACT_ADDRESS
 """
 
 import os
 import sys
-import argparse
+import time
 import json
+import logging
+import argparse
+import traceback
 from dotenv import load_dotenv
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "face_module"))
@@ -37,59 +34,130 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+# Configure main pipeline logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("pipeline")
 
 from face_id import encode_face
 from reverse_search import reverse_image_search
 from blockchain_utils import upload_record, verify_record
 
 
+def print_step_header(step_num: int, title: str):
+    print("\n" + "=" * 70)
+    print(f"  STEP {step_num} — {title.upper()}")
+    print("=" * 70)
+
+
+def log_fatal_bug(step_name: str, exc: Exception):
+    tb = traceback.extract_tb(exc.__traceback__)
+    last_frame = tb[-1] if tb else None
+    
+    print("\n" + "!" * 70)
+    print(f"  ❌ FATAL FAILURE IN STEP: {step_name}")
+    print("!" * 70)
+    logger.error(f"Pipeline execution halted during [{step_name}]")
+    logger.error(f"Error Type: {type(exc).__name__}")
+    logger.error(f"Error Message: {exc}")
+    
+    if last_frame:
+        filename = os.path.basename(last_frame.filename)
+        logger.error(f"Bug Location: File '{filename}', Line {last_frame.lineno}, in Function '{last_frame.name}'")
+        logger.error(f"Failing Line of Code: -> {last_frame.line}")
+    
+    print("\n--- Full Technical Traceback ---")
+    traceback.print_exc()
+    print("!" * 70 + "\n")
+
+
 def run_pipeline(face_image_path: str):
+    start_time = time.time()
+    logger.info("Starting Face -> Search -> Blockchain Verification Pipeline...")
     load_dotenv()
 
-    print("=" * 60)
-    print("STEP 1 — FACE SCAN")
-    print("=" * 60)
-    face_result = encode_face(face_image_path)
-    print(f"Face detected at: {face_result['location']}")
-    print(f"Encoding fingerprint: {face_result['fingerprint']}\n")
+    # -------------------------------------------------------------------------
+    # STEP 1: FACE SCAN & ENCODING
+    # -------------------------------------------------------------------------
+    print_step_header(1, "Face Scan & Encoding (face_id.py)")
+    step1_start = time.time()
+    try:
+        face_result = encode_face(face_image_path)
+        logger.info(f"✅ STEP 1 COMPLETED in {round(time.time() - step1_start, 2)}s")
+        print(f"   Face Location (top, right, bottom, left): {face_result['location']}")
+        print(f"   Face Encoding SHA-256 Fingerprint:        {face_result['fingerprint']}")
+    except Exception as e:
+        log_fatal_bug("STEP 1: FACE SCAN", e)
+        return False
 
-    print("=" * 60)
-    print("STEP 2 — WEB / SOCIAL MEDIA SEARCH (Google Cloud Vision)")
-    print("=" * 60)
-    matches = reverse_image_search(face_image_path)
-    if not matches:
-        print("No matches found. This image may not be indexed publicly yet, "
-              "or may not have been posted anywhere else on the web. Exiting.")
-        return
+    # -------------------------------------------------------------------------
+    # STEP 2: REVERSE IMAGE SEARCH
+    # -------------------------------------------------------------------------
+    print_step_header(2, "Web / Social Media Search (Google Cloud Vision)")
+    step2_start = time.time()
+    try:
+        matches = reverse_image_search(face_image_path)
+        if not matches:
+            logger.warning("No web matches found for this photo. Image is not publicly indexed. Pipeline exiting gracefully.")
+            return False
 
-    top_match = matches[0]
-    print(f"Top match found:")
-    print(f"  Title:  {top_match['title']}")
-    print(f"  Source: {top_match['source']}")
-    print(f"  Link:   {top_match['link']}\n")
+        top_match = matches[0]
+        logger.info(f"✅ STEP 2 COMPLETED in {round(time.time() - step2_start, 2)}s ({len(matches)} matches found)")
+        print(f"   Top Matched Web Page:")
+        print(f"     Title:  {top_match['title']}")
+        print(f"     Source: {top_match['source']}")
+        print(f"     Link:   {top_match['link']}")
+    except Exception as e:
+        log_fatal_bug("STEP 2: REVERSE WEB SEARCH", e)
+        return False
 
-    print("=" * 60)
-    print("STEP 3 — BLOCKCHAIN UPLOAD")
-    print("=" * 60)
-    upload_result = upload_record(top_match)
-    print(f"Content hash:  {upload_result['content_hash']}")
-    print(f"Tx hash:       {upload_result['tx_hash']}")
-    print(f"Block number:  {upload_result['block_number']}\n")
+    # -------------------------------------------------------------------------
+    # STEP 3: BLOCKCHAIN UPLOAD
+    # -------------------------------------------------------------------------
+    print_step_header(3, "Blockchain Upload (Ethereum Sepolia Testnet)")
+    step3_start = time.time()
+    try:
+        upload_result = upload_record(top_match)
+        logger.info(f"✅ STEP 3 COMPLETED in {round(time.time() - step3_start, 2)}s")
+        print(f"   Keccak256 Content Hash: 0x{upload_result['content_hash']}")
+        print(f"   Ethereum Tx Hash:       0x{upload_result['tx_hash']}")
+        print(f"   Confirmed Block Number: #{upload_result['block_number']}")
+    except Exception as e:
+        log_fatal_bug("STEP 3: BLOCKCHAIN UPLOAD", e)
+        return False
 
-    print("=" * 60)
-    print("STEP 4 — ON-CHAIN RE-VERIFICATION")
-    print("=" * 60)
-    verification = verify_record(top_match)
-    if verification:
-        print("✅ Record verified on-chain:")
-        print(json.dumps(verification, indent=2))
-    else:
-        print("❌ Record not found on-chain (something went wrong).")
+    # -------------------------------------------------------------------------
+    # STEP 4: ON-CHAIN RE-VERIFICATION
+    # -------------------------------------------------------------------------
+    print_step_header(4, "On-Chain Re-Verification")
+    step4_start = time.time()
+    try:
+        verification = verify_record(top_match)
+        if verification:
+            logger.info(f"✅ STEP 4 COMPLETED in {round(time.time() - step4_start, 2)}s")
+            print("\n🎉 SUCCESS: Record verified 100% authentic on Ethereum Sepolia Blockchain:")
+            print(json.dumps(verification, indent=2))
+        else:
+            logger.error("❌ On-chain query returned False: Record not found in contract state!")
+            return False
+    except Exception as e:
+        log_fatal_bug("STEP 4: ON-CHAIN RE-VERIFICATION", e)
+        return False
+
+    total_duration = round(time.time() - start_time, 2)
+    print("\n" + "=" * 70)
+    logger.info(f"🎉 PIPELINE EXECUTED SUCCESSFULLY IN {total_duration} SECONDS!")
+    print("=" * 70 + "\n")
+    return True
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Face → Search → Blockchain verification pipeline")
-    parser.add_argument("--face", required=True, help="Path to local photo — used for both face detection and the web search")
+    parser.add_argument("--face", required=True, help="Path to local photo — used for face detection and web search")
     args = parser.parse_args()
 
     run_pipeline(args.face)
+
