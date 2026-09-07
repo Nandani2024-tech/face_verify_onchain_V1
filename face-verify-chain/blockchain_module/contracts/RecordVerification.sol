@@ -16,12 +16,7 @@ contract RecordVerification {
     // contentHash (keccak256 of the post/image/metadata) => Record
     mapping(bytes32 => Record) private records;
 
-    event RecordStored(
-        bytes32 indexed contentHash,
-        address indexed submitter,
-        uint256 timestamp,
-        string metadataURI
-    );
+    event RecordStored(bytes32 indexed hash, address indexed submitter, uint256 timestamp);
 
     /// @notice Store a new fingerprint on-chain. Reverts if this exact
     ///         hash has already been recorded (prevents silent overwrite).
@@ -35,7 +30,7 @@ contract RecordVerification {
             exists: true
         });
 
-        emit RecordStored(contentHash, msg.sender, block.timestamp, metadataURI);
+        emit RecordStored(contentHash, msg.sender, block.timestamp);
     }
 
     /// @notice Re-verify a fingerprint against the on-chain record.

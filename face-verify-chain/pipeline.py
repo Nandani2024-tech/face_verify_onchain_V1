@@ -125,6 +125,8 @@ def run_pipeline(face_image_path: str):
         print(f"   Keccak256 Content Hash: 0x{upload_result['content_hash']}")
         print(f"   Ethereum Tx Hash:       0x{upload_result['tx_hash']}")
         print(f"   Confirmed Block Number: #{upload_result['block_number']}")
+        if upload_result['tx_hash'] != 'ALREADY_STORED':
+            print(f"   🔗 View on Etherscan:   https://sepolia.etherscan.io/tx/0x{upload_result['tx_hash']}")
     except Exception as e:
         log_fatal_bug("STEP 3: BLOCKCHAIN UPLOAD", e)
         return False

@@ -65,7 +65,7 @@ def deploy():
         "from": account.address,
         "nonce": nonce,
         "gas": 2_000_000,
-        "gasPrice": w3.eth.gas_price,
+        "gasPrice": int(w3.eth.gas_price * 1.25),
         "chainId": chain_id,
     })
 

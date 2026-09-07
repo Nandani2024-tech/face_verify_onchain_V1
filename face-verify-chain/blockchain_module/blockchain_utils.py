@@ -166,7 +166,7 @@ def upload_record(matched_post: dict):
     except Exception as e:
         logger.warning(f"Pre-check verifyRecord query failed, proceeding to upload: {e}")
 
-    nonce = w3.eth.get_transaction_count(account.address)
+    nonce = w3.eth.get_transaction_count(account.address, 'pending')
     base_gas_price = w3.eth.gas_price
     gas_price = int(base_gas_price * 1.25)
     gas_price_gwei = w3.from_wei(gas_price, "gwei")
@@ -191,6 +191,7 @@ def upload_record(matched_post: dict):
     logger.info("Broadcasting raw transaction to Ethereum network...")
     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
     logger.info(f"Transaction Broadcasted! Tx Hash: 0x{tx_hash.hex()}")
+    print(f"🔗 View on Etherscan: https://sepolia.etherscan.io/tx/0x{tx_hash.hex()}")
 
     logger.info("Waiting for block confirmation (mining) with 180s timeout...")
     receipt = None
@@ -218,6 +219,17 @@ def upload_record(matched_post: dict):
     if receipt.status == 0:
         logger.error(f"Transaction REVERTED on-chain! Tx Hash: 0x{tx_hash.hex()}. Check if content hash was already submitted.")
         raise RuntimeError(f"On-chain transaction reverted for tx 0x{tx_hash.hex()}")
+
+    try:
+        processed_receipt = contract.events.RecordStored().process_receipt(receipt)
+        if processed_receipt:
+            event_args = processed_receipt[0]['args']
+            print("\n🔔 Event Emitted: RecordStored")
+            print(f"   hash: 0x{event_args['hash'].hex()}")
+            print(f"   submitter: {event_args['submitter']}")
+            print(f"   timestamp: {event_args['timestamp']}")
+    except Exception as e:
+        logger.warning(f"Could not parse RecordStored event: {e}")
 
     return {
         "content_hash": content_hash.hex(),
