@@ -152,6 +152,9 @@ def upload_record(matched_post: dict, face_fingerprint: str):
     clean_face_fp = face_fingerprint.replace("0x", "").strip()
     face_hash_bytes = bytes.fromhex(clean_face_fp)
 
+    contract_address = os.environ.get("CONTRACT_ADDRESS", "0xC7aCba7522EF4c6f1b3c738Fa879773f0A69EBd2").strip()
+    contract_url = f"https://sepolia.etherscan.io/address/{contract_address}"
+
     # Duplicate-Hash Guard: check if record already exists on-chain
     logger.info(f"Checking on-chain existence for content hash 0x{content_hash.hex()}...")
     try:
@@ -172,9 +175,13 @@ def upload_record(matched_post: dict, face_fingerprint: str):
             logger.info(f"  Existing Timestamp: {dt_str}")
             logger.info(f"  Existing Metadata URI: '{existing_uri}'")
             logger.info(f"  Existing Face Hash: {onchain_face_hex}")
+            logger.info(f"  Contract Storage Link: {contract_url}")
             return {
                 "content_hash": content_hash.hex(),
                 "tx_hash": "ALREADY_STORED",
+                "tx_url": contract_url,
+                "contract_address": contract_address,
+                "contract_url": contract_url,
                 "block_number": "PREVIOUSLY_MINED",
                 "timestamp_utc": dt_str,
                 "face_hash": onchain_face_hex,
@@ -208,14 +215,18 @@ def upload_record(matched_post: dict, face_fingerprint: str):
 
     logger.info("Broadcasting raw transaction to Ethereum network...")
     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-    logger.info(f"Transaction Broadcasted! Tx Hash: 0x{tx_hash.hex()}")
+    tx_hash_hex = tx_hash.hex()
+    tx_url = f"https://sepolia.etherscan.io/tx/0x{tx_hash_hex}"
+    logger.info(f"Transaction Broadcasted! Tx Hash: 0x{tx_hash_hex}")
+    logger.info(f"  └─ Sepolia Etherscan Tx Link: {tx_url}")
+    logger.info(f"  └─ Contract Storage Link:     {contract_url}")
 
     logger.info("Waiting for block confirmation (mining) with 180s timeout...")
     receipt = None
     try:
         receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
     except TimeExhausted:
-        logger.warning(f"Initial wait_for_transaction_receipt timed out after 180s for tx 0x{tx_hash.hex()}. Starting secondary receipt polling (every 5s up to 120s)...")
+        logger.warning(f"Initial wait_for_transaction_receipt timed out after 180s for tx 0x{tx_hash_hex}. Starting secondary receipt polling (every 5s up to 120s)...")
         for attempt in range(1, 25):
             time.sleep(5)
             try:
@@ -227,19 +238,23 @@ def upload_record(matched_post: dict, face_fingerprint: str):
                 pass
 
         if receipt is None:
-            logger.error(f"Transaction receipt not found after initial 180s timeout + 120s secondary polling for tx 0x{tx_hash.hex()}")
-            raise TimeExhausted(f"Transaction HexBytes('0x{tx_hash.hex()}') is not in the chain after 300 seconds")
+            logger.error(f"Transaction receipt not found after initial 180s timeout + 120s secondary polling for tx 0x{tx_hash_hex}")
+            raise TimeExhausted(f"Transaction HexBytes('0x{tx_hash_hex}') is not in the chain after 300 seconds")
 
     tx_status = "SUCCESS (1)" if receipt.status == 1 else "REVERTED (0)"
     logger.info(f"Transaction Mined! Block #{receipt.blockNumber} | Status: {tx_status} | Gas Used: {receipt.gasUsed}")
+    logger.info(f"  └─ Verified Etherscan Tx Link: {tx_url}")
 
     if receipt.status == 0:
-        logger.error(f"Transaction REVERTED on-chain! Tx Hash: 0x{tx_hash.hex()}. Check if content hash was already submitted.")
-        raise RuntimeError(f"On-chain transaction reverted for tx 0x{tx_hash.hex()}")
+        logger.error(f"Transaction REVERTED on-chain! Tx Hash: 0x{tx_hash_hex}. Check if content hash was already submitted.")
+        raise RuntimeError(f"On-chain transaction reverted for tx 0x{tx_hash_hex}")
 
     return {
         "content_hash": content_hash.hex(),
-        "tx_hash": tx_hash.hex(),
+        "tx_hash": tx_hash_hex,
+        "tx_url": tx_url,
+        "contract_address": contract_address,
+        "contract_url": contract_url,
         "block_number": receipt.blockNumber,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "face_hash": clean_face_fp,
@@ -256,6 +271,8 @@ def verify_record(matched_post: dict, face_fingerprint: str = None):
     logger.info("Initializing On-Chain Re-Verification...")
     w3 = _connect_web3()
     contract = _load_contract(w3)
+    contract_address = os.environ.get("CONTRACT_ADDRESS", "0xC7aCba7522EF4c6f1b3c738Fa879773f0A69EBd2").strip()
+    contract_url = f"https://sepolia.etherscan.io/address/{contract_address}"
 
     content_hash = fingerprint_post(matched_post)
     logger.info(f"Executing read-only view call verifyRecord(0x{content_hash.hex()})...")
@@ -273,6 +290,7 @@ def verify_record(matched_post: dict, face_fingerprint: str = None):
     dt_str = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
     onchain_face_hex = onchain_face_bytes.hex()
     logger.info(f"ON-CHAIN RECORD VERIFIED! Submitter: {submitter}, Timestamp: {dt_str}, MetadataURI: '{metadata_uri}', FaceHash: {onchain_face_hex}")
+    logger.info(f"  Contract Storage Link: {contract_url}")
 
     if face_fingerprint:
         clean_fp = face_fingerprint.replace("0x", "").strip().lower()
@@ -287,6 +305,8 @@ def verify_record(matched_post: dict, face_fingerprint: str = None):
         "timestamp_utc": dt_str,
         "metadata_uri": metadata_uri,
         "face_hash": onchain_face_hex,
+        "contract_address": contract_address,
+        "contract_url": contract_url,
     }
 
 

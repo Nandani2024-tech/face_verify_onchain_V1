@@ -256,38 +256,46 @@ Select a result to verify on-chain [1-5], or 's' to skip blockchain upload: 2
 ======================================================================
   STEP 3 — BLOCKCHAIN UPLOAD (ETHEREUM SEPOLIA TESTNET)
 ======================================================================
-[2026-09-07 13:08:41] [INFO] [blockchain_utils] Record already verified on-chain, skipping duplicate tx
-[2026-09-07 13:08:41] [INFO] ✅ STEP 3 COMPLETED in 3.33s
-   Keccak256 Content Hash: 0x2750934180104aa2df2865adfaefee96b901da4855d2bb77e83dcdb1473339fd
-   Ethereum Tx Hash:       0xALREADY_STORED
-   Confirmed Block Number: #PREVIOUSLY_MINED
-   Bound Face Hash:        a74eff834249816a7c9f4dc5fce5239f59ec7d7acc383c283dd2fb1a04545501
+[2026-09-07 17:42:07] [INFO] [blockchain_utils] Transaction Broadcasted! Tx Hash: 0x00219a0996024d0ce43313ff26ff94f96925c59b5d99297c1ddb5f35629987a3
+[2026-09-07 17:42:07] [INFO] [blockchain_utils]   └─ Sepolia Etherscan Tx Link: https://sepolia.etherscan.io/tx/0x00219a0996024d0ce43313ff26ff94f96925c59b5d99297c1ddb5f35629987a3
+[2026-09-07 17:42:07] [INFO] [blockchain_utils]   └─ Contract Storage Link:     https://sepolia.etherscan.io/address/0xC7aCba7522EF4c6f1b3c738Fa879773f0A69EBd2
+[2026-09-07 17:42:13] [INFO] ✅ STEP 3 COMPLETED in 9.92s
+   Keccak256 Content Hash: 0x5f0c50885078501e6e2ddcd45af6ff664a86e71924ff7492d39c74085172f336
+   Ethereum Tx Hash:       0x00219a0996024d0ce43313ff26ff94f96925c59b5d99297c1ddb5f35629987a3
+   Tx Etherscan Link:      https://sepolia.etherscan.io/tx/0x00219a0996024d0ce43313ff26ff94f96925c59b5d99297c1ddb5f35629987a3
+   Contract Storage Link:  https://sepolia.etherscan.io/address/0xC7aCba7522EF4c6f1b3c738Fa879773f0A69EBd2
+   Confirmed Block Number: #11654088
+   Bound Face Hash:        67eca8e6993971a3c19d4974c028d23b7c2836d81ef925dbd6c09e5887855eab
 
 ======================================================================
   STEP 4 — ON-CHAIN RE-VERIFICATION
 ======================================================================
-[2026-09-07 13:08:42] [INFO] ✅ STEP 4 COMPLETED in 1.07s
+[2026-09-07 17:42:15] [INFO] ✅ STEP 4 COMPLETED in 1.51s
 
 🎉 SUCCESS: Record verified 100% authentic on Ethereum Sepolia Blockchain:
 {
-  "content_hash": "2750934180104aa2df2865adfaefee96b901da4855d2bb77e83dcdb1473339fd",
+  "content_hash": "5f0c50885078501e6e2ddcd45af6ff664a86e71924ff7492d39c74085172f336",
   "submitter": "0x897Cd1ec614FC08Db1e42EB68Dc3d27bA8CB59df",
-  "timestamp_utc": "2026-09-07T07:36:00+00:00",
-  "metadata_uri": "https://www.youtube.com/watch?v=xYqmKwW5Ck4",
-  "face_hash": "a74eff834249816a7c9f4dc5fce5239f59ec7d7acc383c283dd2fb1a04545501"
+  "timestamp_utc": "2026-09-07T12:12:12+00:00",
+  "metadata_uri": "https://en.wikipedia.org/wiki/Sam_Altman",
+  "face_hash": "67eca8e6993971a3c19d4974c028d23b7c2836d81ef925dbd6c09e5887855eab",
+  "contract_address": "0xC7aCba7522EF4c6f1b3c738Fa879773f0A69EBd2",
+  "contract_url": "https://sepolia.etherscan.io/address/0xC7aCba7522EF4c6f1b3c738Fa879773f0A69EBd2"
 }
 
 ======================================================================
   ON-CHAIN RECORD BREAKDOWN — WHAT EACH FIELD PROVES
 ======================================================================
+  contractAddr : 0xC7aCba7522EF4c6f1b3c738Fa879773f0A69EBd2 → Smart contract where record is stored
+                                   https://sepolia.etherscan.io/address/0xC7aCba7522EF4c6f1b3c738Fa879773f0A69EBd2
   submitter    : 0x897C...59df    → Ethereum wallet that submitted this record
-  timestamp    : 2026-09-07T07:36:00+00:00 → Exact UTC time this record was mined on-chain
-  metadataURI  : https://www.youtube.com/watch?v=xYqmKwW5Ck4 → The verified web post this record refers to
-  faceHash     : a74eff834249...     → SHA-256 fingerprint of the face detected in
+  timestamp    : 2026-09-07T12:12:12+00:00 → Exact UTC time this record was mined on-chain
+  metadataURI  : https://en.wikipedia.org/wiki/Sam_Altman → The verified web post this record refers to
+  faceHash     : 67eca8e69939...     → SHA-256 fingerprint of the face detected in
                                    Step 1 — cryptographically binds THIS face
                                    to THIS specific post, not just the post
                                    metadata alone
-  contentHash  : 0x2750934180...   → Keccak256 hash used as the on-chain lookup
+  contentHash  : 0x5f0c508850...   → Keccak256 hash used as the on-chain lookup
                                    key (derived from post title+source+link)
 ======================================================================
 ✅ This proves: the face scanned in Step 1 was matched to the post above,

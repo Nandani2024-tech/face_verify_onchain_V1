@@ -209,8 +209,20 @@ def run_pipeline(face_image_path: str):
     try:
         upload_result = upload_record(selected_match, face_fingerprint)
         logger.info(f"✅ STEP 3 COMPLETED in {round(time.time() - step3_start, 2)}s")
-        print(f"   {CLR_B_WHITE}Keccak256 Content Hash:{CLR_RESET} {CLR_B_GREEN}0x{upload_result['content_hash']}{CLR_RESET}")
-        print(f"   {CLR_B_WHITE}Ethereum Tx Hash:      {CLR_RESET} {CLR_B_YELLOW}0x{upload_result['tx_hash']}{CLR_RESET}")
+        
+        c_hash = upload_result['content_hash']
+        c_hash_str = c_hash if c_hash.startswith("0x") else f"0x{c_hash}"
+        tx_val = upload_result['tx_hash']
+        tx_str = tx_val if tx_val.startswith("0x") or tx_val == "ALREADY_STORED" else f"0x{tx_val}"
+        
+        contract_addr = upload_result.get('contract_address') or os.environ.get("CONTRACT_ADDRESS", "0xC7aCba7522EF4c6f1b3c738Fa879773f0A69EBd2").strip()
+        contract_url = upload_result.get('contract_url') or f"https://sepolia.etherscan.io/address/{contract_addr}"
+        tx_url = upload_result.get('tx_url') or (f"https://sepolia.etherscan.io/tx/{tx_str}" if tx_val != "ALREADY_STORED" else contract_url)
+
+        print(f"   {CLR_B_WHITE}Keccak256 Content Hash:{CLR_RESET} {CLR_B_GREEN}{c_hash_str}{CLR_RESET}")
+        print(f"   {CLR_B_WHITE}Ethereum Tx Hash:      {CLR_RESET} {CLR_B_YELLOW}{tx_str}{CLR_RESET}")
+        print(f"   {CLR_B_WHITE}Tx Etherscan Link:     {CLR_RESET} {CLR_CYAN}{tx_url}{CLR_RESET}")
+        print(f"   {CLR_B_WHITE}Contract Storage Link: {CLR_RESET} {CLR_CYAN}{contract_url}{CLR_RESET}")
         print(f"   {CLR_B_WHITE}Confirmed Block Number:{CLR_RESET} {CLR_B_CYAN}#{upload_result['block_number']}{CLR_RESET}")
         print(f"   {CLR_B_WHITE}Bound Face Hash:       {CLR_RESET} {CLR_B_MAGENTA}{upload_result['face_hash']}{CLR_RESET}")
     except Exception as e:
@@ -232,9 +244,14 @@ def run_pipeline(face_image_path: str):
             # ON-CHAIN RECORD BREAKDOWN
             sub_addr = verification['submitter']
             sub_short = f"{sub_addr[:6]}...{sub_addr[-4:]}" if len(sub_addr) > 10 else sub_addr
+            contract_addr = verification.get('contract_address') or os.environ.get("CONTRACT_ADDRESS", "0xC7aCba7522EF4c6f1b3c738Fa879773f0A69EBd2").strip()
+            contract_url = verification.get('contract_url') or f"https://sepolia.etherscan.io/address/{contract_addr}"
+
             print("\n" + CLR_B_MAGENTA + "=" * 70 + CLR_RESET)
             print(f"  {CLR_B_WHITE}ON-CHAIN RECORD BREAKDOWN — WHAT EACH FIELD PROVES{CLR_RESET}")
             print(CLR_B_MAGENTA + "=" * 70 + CLR_RESET)
+            print(f"  {CLR_B_CYAN}contractAddr {CLR_RESET}: {CLR_YELLOW}{contract_addr}{CLR_RESET} → {CLR_B_WHITE}Smart contract where record is stored{CLR_RESET}")
+            print(f"                                   {CLR_CYAN}{contract_url}{CLR_RESET}")
             print(f"  {CLR_B_CYAN}submitter    {CLR_RESET}: {CLR_YELLOW}{sub_short:<16}{CLR_RESET} → {CLR_B_WHITE}Ethereum wallet that submitted this record{CLR_RESET}")
             print(f"  {CLR_B_CYAN}timestamp    {CLR_RESET}: {CLR_YELLOW}{verification['timestamp_utc']:<16}{CLR_RESET} → {CLR_B_WHITE}Exact UTC time this record was mined on-chain{CLR_RESET}")
             print(f"  {CLR_B_CYAN}metadataURI  {CLR_RESET}: {CLR_YELLOW}{verification['metadata_uri']}{CLR_RESET} → {CLR_B_WHITE}The verified web post this record refers to{CLR_RESET}")

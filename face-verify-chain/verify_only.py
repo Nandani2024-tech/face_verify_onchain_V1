@@ -37,7 +37,7 @@ def main():
     print(f"Executing read-only view call verifyRecord(0x{content_hash.hex()})...")
     
     try:
-        exists, submitter, timestamp, metadata_uri = contract.functions.verifyRecord(content_hash).call()
+        exists, submitter, timestamp, metadata_uri, onchain_face_bytes = contract.functions.verifyRecord(content_hash).call()
     except Exception as e:
         print(f"Failed to query verifyRecord on contract: {e}")
         sys.exit(1)
@@ -47,12 +47,19 @@ def main():
         sys.exit(1)
 
     from datetime import datetime, timezone
+    import os
     dt_str = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+    contract_address = os.environ.get("CONTRACT_ADDRESS", "0xC7aCba7522EF4c6f1b3c738Fa879773f0A69EBd2").strip()
+    contract_url = f"https://sepolia.etherscan.io/address/{contract_address}"
+    onchain_face_hex = onchain_face_bytes.hex()
     
     print("\n🎉 ON-CHAIN RECORD VERIFIED!")
-    print(f"   Submitter:    {submitter}")
-    print(f"   Timestamp:    {dt_str}")
-    print(f"   Metadata URI: {metadata_uri}")
+    print(f"   Contract Address:      {contract_address}")
+    print(f"   Contract Storage Link: {contract_url}")
+    print(f"   Submitter:             {submitter}")
+    print(f"   Timestamp:             {dt_str}")
+    print(f"   Metadata URI:          {metadata_uri}")
+    print(f"   Bound Face Hash:       {onchain_face_hex}")
 
 if __name__ == "__main__":
     main()
