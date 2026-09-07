@@ -9,11 +9,13 @@ prove the record is genuinely there and unaltered.
 
 import os
 import sys
+import time
 import json
 import hashlib
 import logging
 from datetime import datetime, timezone
 from web3 import Web3
+from web3.exceptions import TimeExhausted
 from dotenv import load_dotenv
 
 if sys.platform == "win32":
@@ -37,6 +39,47 @@ if not logger.handlers:
 
 
 ABI_PATH = os.path.join(os.path.dirname(__file__), "RecordVerification_abi.json")
+
+
+def _connect_web3() -> Web3:
+    """
+    Connect to Ethereum Sepolia RPC.
+    Supports SEPOLIA_RPC_URL and RPC_URL environment variables, falling back to a curated
+    list of public RPC endpoints in order until one connects successfully via w3.is_connected().
+    """
+    env_sepolia_url = os.environ.get("SEPOLIA_RPC_URL", "").strip()
+    env_rpc_url = os.environ.get("RPC_URL", "").strip()
+
+    endpoints = []
+    if env_sepolia_url:
+        endpoints.append(env_sepolia_url)
+    if env_rpc_url and env_rpc_url not in endpoints:
+        endpoints.append(env_rpc_url)
+
+    fallbacks = [
+        "https://ethereum-sepolia-rpc.publicnode.com",
+        "https://rpc.sepolia.org",
+        "https://ethereum-sepolia.blockpi.network/v1/rpc/public",
+    ]
+    for url in fallbacks:
+        if url not in endpoints:
+            endpoints.append(url)
+
+    for url in endpoints:
+        logger.info(f"Attempting connection to RPC Endpoint: {url}")
+        try:
+            w3 = Web3(Web3.HTTPProvider(url))
+            if w3.is_connected():
+                actual_chain_id = w3.eth.chain_id
+                logger.info(f"✅ Successfully connected to RPC Endpoint: {url} (Chain ID: {actual_chain_id})")
+                return w3
+            else:
+                logger.warning(f"RPC Endpoint unreachable: {url}")
+        except Exception as e:
+            logger.warning(f"Failed connection attempt to {url}: {e}")
+
+    logger.error("All RPC endpoints failed to connect!")
+    raise ConnectionError("Could not connect to any Ethereum Sepolia RPC endpoint.")
 
 
 def _load_contract(w3: Web3):
@@ -82,25 +125,14 @@ def upload_record(matched_post: dict):
     the transaction hash + content hash for later verification.
     """
     logger.info("Initializing Blockchain Upload to Ethereum Sepolia...")
-    rpc_url = os.environ.get("RPC_URL", "").strip()
     private_key = os.environ.get("PRIVATE_KEY", "").strip()
     chain_id = int(os.environ.get("CHAIN_ID", 11155111))
 
-    if not rpc_url:
-        logger.error("RPC_URL missing in .env!")
-        raise KeyError("RPC_URL missing in .env")
     if not private_key:
         logger.error("PRIVATE_KEY missing in .env!")
         raise KeyError("PRIVATE_KEY missing in .env")
 
-    logger.info(f"Connecting to RPC Endpoint: {rpc_url} (Expected Chain ID: {chain_id})")
-    w3 = Web3(Web3.HTTPProvider(rpc_url))
-    if not w3.is_connected():
-        logger.error(f"Failed to connect to Ethereum RPC endpoint at: '{rpc_url}'")
-        raise ConnectionError(f"Could not connect to RPC at {rpc_url}")
-
-    actual_chain_id = w3.eth.chain_id
-    logger.info(f"RPC Connection Established (Actual Chain ID: {actual_chain_id})")
+    w3 = _connect_web3()
 
     account = w3.eth.account.from_key(private_key)
     balance_wei = w3.eth.get_balance(account.address)
@@ -115,9 +147,31 @@ def upload_record(matched_post: dict):
     content_hash = fingerprint_post(matched_post)
     metadata_uri = matched_post.get("link", "")
 
+    # Duplicate-Hash Guard: check if record already exists on-chain
+    logger.info(f"Checking on-chain existence for content hash 0x{content_hash.hex()}...")
+    try:
+        exists, submitter, timestamp, existing_uri = contract.functions.verifyRecord(content_hash).call()
+        if exists:
+            dt_str = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+            logger.info("Record already verified on-chain, skipping duplicate tx")
+            logger.info(f"  Existing Submitter: {submitter}")
+            logger.info(f"  Existing Timestamp: {dt_str}")
+            logger.info(f"  Existing Metadata URI: '{existing_uri}'")
+            return {
+                "content_hash": content_hash.hex(),
+                "tx_hash": "ALREADY_STORED",
+                "block_number": "PREVIOUSLY_MINED",
+                "timestamp_utc": dt_str,
+            }
+    except Exception as e:
+        logger.warning(f"Pre-check verifyRecord query failed, proceeding to upload: {e}")
+
     nonce = w3.eth.get_transaction_count(account.address)
-    gas_price = w3.eth.gas_price
-    logger.info(f"Building storeRecord() Tx: Nonce={nonce}, GasPrice={w3.from_wei(gas_price, 'gwei'):.2f} Gwei, MetadataURI='{metadata_uri}'")
+    base_gas_price = w3.eth.gas_price
+    gas_price = int(base_gas_price * 1.25)
+    gas_price_gwei = w3.from_wei(gas_price, "gwei")
+    logger.info(f"Fetched Base Gas Price: {w3.from_wei(base_gas_price, 'gwei'):.2f} Gwei | Applying 1.25x Buffer -> Gas Price: {gas_price_gwei:.2f} Gwei")
+    logger.info(f"Building storeRecord() Tx: Nonce={nonce}, GasPrice={gas_price_gwei:.2f} Gwei, MetadataURI='{metadata_uri}'")
 
     try:
         tx = contract.functions.storeRecord(content_hash, metadata_uri).build_transaction({
@@ -128,7 +182,7 @@ def upload_record(matched_post: dict):
             "chainId": chain_id,
         })
     except Exception as e:
-        logger.error(f"Failed to build storeRecord transaction (Hash may already exist on-chain): {e}")
+        logger.error(f"Failed to build storeRecord transaction: {e}")
         raise
 
     logger.info("Signing transaction with wallet private key...")
@@ -137,9 +191,27 @@ def upload_record(matched_post: dict):
     logger.info("Broadcasting raw transaction to Ethereum network...")
     tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
     logger.info(f"Transaction Broadcasted! Tx Hash: 0x{tx_hash.hex()}")
-    logger.info("Waiting for block confirmation (mining)...")
 
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    logger.info("Waiting for block confirmation (mining) with 180s timeout...")
+    receipt = None
+    try:
+        receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
+    except TimeExhausted:
+        logger.warning(f"Initial wait_for_transaction_receipt timed out after 180s for tx 0x{tx_hash.hex()}. Starting secondary receipt polling (every 5s up to 120s)...")
+        for attempt in range(1, 25):
+            time.sleep(5)
+            try:
+                receipt = w3.eth.get_transaction_receipt(tx_hash)
+                if receipt is not None:
+                    logger.info(f"Secondary polling discovered mined transaction receipt on attempt {attempt} (after {attempt * 5}s)!")
+                    break
+            except Exception:
+                pass
+
+        if receipt is None:
+            logger.error(f"Transaction receipt not found after initial 180s timeout + 120s secondary polling for tx 0x{tx_hash.hex()}")
+            raise TimeExhausted(f"Transaction HexBytes('0x{tx_hash.hex()}') is not in the chain after 300 seconds")
+
     tx_status = "SUCCESS (1)" if receipt.status == 1 else "REVERTED (0)"
     logger.info(f"Transaction Mined! Block #{receipt.blockNumber} | Status: {tx_status} | Gas Used: {receipt.gasUsed}")
 
@@ -161,8 +233,7 @@ def verify_record(matched_post: dict):
     on-chain record. Returns the on-chain record if found, else None.
     """
     logger.info("Initializing On-Chain Re-Verification...")
-    rpc_url = os.environ.get("RPC_URL", "").strip()
-    w3 = Web3(Web3.HTTPProvider(rpc_url))
+    w3 = _connect_web3()
     contract = _load_contract(w3)
 
     content_hash = fingerprint_post(matched_post)
@@ -187,4 +258,3 @@ def verify_record(matched_post: dict):
         "timestamp_utc": dt_str,
         "metadata_uri": metadata_uri,
     }
-
