@@ -1,38 +1,29 @@
-# Environment & Secrets (Never commit credentials)
+# Environments
 .env
-.env.*
-!.env.example
-*.pem
-*.key
-
-# Python Virtual Environments
 venv/
-.venv/
 env/
 ENV/
+env.bak/
+venv.bak/
+samples/
 
-# Python Bytecode & Cache
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
-.pytest_cache/
-.mypy_cache/
 
-# OS & Editor Files
-.DS_Store
-Thumbs.db
+# IDE / Editor
 .vscode/
 .idea/
 *.swp
+*.swo
+.DS_Store
 
-# Blockchain & Solc Build Artifacts
-blockchain_module/RecordVerification_abi.json
-blockchain_module/contracts/*.bin
-blockchain_module/contracts/*.abi
-blockchain_module/build/
-.solcx/
+# Caches
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Sample Photos (Ignore local test photos, keep directory via .gitkeep)
-samples/*
-!samples/.gitkeep
-
+# Google Cloud credentials (prevent accidental commits)
+*.json
+!RecordVerification_abi.json
