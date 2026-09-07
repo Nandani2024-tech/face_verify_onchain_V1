@@ -3,8 +3,8 @@ reverse_search.py
 ------------------
 Step 2 of the pipeline: given a LOCAL image file you already own (e.g. your
 own photo), run a real reverse-image / web-detection search via Google
-Cloud Vision API's WEB_DETECTION feature, and return matching web pages
-where that photo (or a near-duplicate of it) appears.
+Cloud Vision API's WEB_DETECTION and TEXT_DETECTION features, returning
+matching web pages prioritized by confidence (full_match vs partial_match).
 """
 
 import os
@@ -39,6 +39,17 @@ if not logger.handlers:
 VISION_ENDPOINT = "https://vision.googleapis.com/v1/images:annotate"
 
 
+class CandidateList(list):
+    """
+    List subclass containing candidate dicts, while carrying OCR text signals
+    and web entity guesses as metadata attributes.
+    """
+    def __init__(self, candidates, text_signal=None, entity_guesses=None):
+        super().__init__(candidates)
+        self.text_signal = text_signal
+        self.entity_guesses = entity_guesses or []
+
+
 def _encode_image(image_path: str) -> str:
     with open(image_path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")
@@ -46,11 +57,13 @@ def _encode_image(image_path: str) -> str:
 
 def reverse_image_search(image_path: str, api_key: str = None, max_results: int = 10):
     """
-    Run a Google Cloud Vision WEB_DETECTION search on the local image at
-    `image_path` and return a list of matching results in the same shape
-    used elsewhere in this project: {title, link, source, thumbnail}.
+    Run Google Cloud Vision WEB_DETECTION + TEXT_DETECTION search on local image at `image_path`.
+    Returns a CandidateList of candidate web pages prioritized by confidence tier:
+      - full_match: exact matching image on page
+      - partial_match: partial matching image or page match
+    Also carries .text_signal and .entity_guesses metadata.
     """
-    logger.info("Initializing Google Cloud Vision Reverse Image Search...")
+    logger.info("Initializing Google Cloud Vision Reverse Image Search (WEB_DETECTION + TEXT_DETECTION)...")
     api_key = api_key or os.environ.get("GOOGLE_VISION_API_KEY")
     if not api_key:
         logger.error("GOOGLE_VISION_API_KEY is missing! Check your .env file or environment variables.")
@@ -74,7 +87,10 @@ def reverse_image_search(image_path: str, api_key: str = None, max_results: int 
         "requests": [
             {
                 "image": {"content": encoded_image},
-                "features": [{"type": "WEB_DETECTION", "maxResults": max_results}],
+                "features": [
+                    {"type": "WEB_DETECTION", "maxResults": max_results},
+                    {"type": "TEXT_DETECTION"},
+                ],
             }
         ]
     }
@@ -104,38 +120,90 @@ def reverse_image_search(image_path: str, api_key: str = None, max_results: int 
         logger.error(f"Google Vision API Returned Error: {err_msg}")
         raise RuntimeError(f"Vision API error: {err_msg}")
 
+    # 1. Process OCR TEXT_DETECTION
+    text_annotations = result.get("textAnnotations", [])
+    detected_text_signal = None
+    if text_annotations and len(text_annotations) > 0:
+        raw_text = text_annotations[0].get("description", "").strip()
+        if raw_text:
+            detected_text_signal = " ".join(raw_text.split())
+            logger.info(f"Detected Text Signals: '{detected_text_signal}'")
+
+    # 2. Process WEB_DETECTION
     web_detection = result.get("webDetection", {})
     pages_matched = web_detection.get("pagesWithMatchingImages", [])
     full_matching = web_detection.get("fullMatchingImages", [])
     partial_matching = web_detection.get("partialMatchingImages", [])
     web_entities = web_detection.get("webEntities", [])
+    best_guess_labels = web_detection.get("bestGuessLabels", [])
 
     logger.info(f"Web Detection Summary: {len(pages_matched)} matching pages, {len(full_matching)} full image matches, {len(partial_matching)} partial image matches, {len(web_entities)} web entities")
 
-    matches = []
+    best_guess_str = ", ".join([b.get("label", "") for b in best_guess_labels if b.get("label")])
+    if not full_matching and (detected_text_signal or best_guess_str):
+        fallback_hint = " | ".join(filter(None, [detected_text_signal, best_guess_str]))
+        logger.info(f"Fallback text-based signal: {fallback_hint}")
+
+    # Collect entity guesses (informational only)
+    entity_guesses = []
+    for ent in web_entities:
+        desc = ent.get("description")
+        if desc and desc not in entity_guesses:
+            entity_guesses.append(desc)
+
+    # 3. Categorize & Rank Candidate Web Pages (full_match vs partial_match)
+    full_match_candidates = []
+    partial_match_candidates = []
+    seen_urls = set()
+
     for page in pages_matched:
-        url = page.get("url", "")
+        url = page.get("url", "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+
         title = page.get("pageTitle") or urlparse(url).netloc or url
         source = urlparse(url).netloc or "unknown"
 
-        thumbnail = None
-        full_matches = page.get("fullMatchingImages") or page.get("partialMatchingImages")
-        if full_matches:
-            thumbnail = full_matches[0].get("url")
+        page_full_matches = page.get("fullMatchingImages", [])
+        page_partial_matches = page.get("partialMatchingImages", [])
 
-        matches.append({
+        thumbnail = None
+        if page_full_matches:
+            thumbnail = page_full_matches[0].get("url")
+        elif page_partial_matches:
+            thumbnail = page_partial_matches[0].get("url")
+
+        is_full_match = len(page_full_matches) > 0 or len(full_matching) > 0 and any(
+            fm.get("url") == url for fm in full_matching
+        )
+
+        candidate_obj = {
             "title": title,
             "link": url,
             "source": source,
             "thumbnail": thumbnail,
-        })
+            "match_confidence_tier": "full_match" if is_full_match else "partial_match",
+        }
 
-    if matches:
-        logger.info(f"Top Match Discovered: '{matches[0]['title']}' on {matches[0]['source']} ({matches[0]['link']})")
+        if is_full_match:
+            full_match_candidates.append(candidate_obj)
+        else:
+            partial_match_candidates.append(candidate_obj)
+
+    # Combine prioritized candidate list: full_match first, then partial_match
+    ordered_candidates = full_match_candidates + partial_match_candidates
+
+    # Cap list at top 5 candidates
+    candidates = ordered_candidates[:5]
+
+    if candidates:
+        top_tier = candidates[0]["match_confidence_tier"]
+        logger.info(f"Top Match Rank Tier: [{top_tier.upper()}] — '{candidates[0]['title']}' on {candidates[0]['source']} ({candidates[0]['link']})")
     else:
-        logger.warning(f"No web page matches found for '{image_path}'. Image may not be publicly indexed.")
+        logger.warning(f"No web page matches found for '{image_path}'.")
 
-    return matches
+    return CandidateList(candidates, text_signal=detected_text_signal, entity_guesses=entity_guesses)
 
 
 if __name__ == "__main__":
@@ -144,11 +212,12 @@ if __name__ == "__main__":
         sys.exit(1)
 
     results = reverse_image_search(sys.argv[1])
-    print(f"\nFound {len(results)} matching web pages:\n")
-    for i, m in enumerate(results[:10], 1):
-        print(f"{i}. {m['title']}")
-        print(f"   source: {m['source']}")
-        print(f"   link:   {m['link']}\n")
+    print(f"\nText Signal: {results.text_signal}")
+    print(f"Entity Guesses: {results.entity_guesses}")
+    print(f"Found {len(results)} candidate web pages:\n")
+    for i, m in enumerate(results, 1):
+        print(f"[{i}] [{m['match_confidence_tier'].upper()}] {m['title']}")
+        print(f"    source: {m['source']}")
+        print(f"    link:   {m['link']}\n")
 
     print(json.dumps(results, indent=2))
-
