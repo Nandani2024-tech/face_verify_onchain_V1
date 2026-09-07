@@ -5,9 +5,10 @@ End-to-end demo pipeline:
 
   1. Face scan     -> detect + encode a face from a local photo
   2. Web search     -> reverse-image-search that SAME local photo directly
-                        (via Google Cloud Vision WEB_DETECTION) to find a
-                        real matching post/page on the web
-  3. Blockchain     -> hash the matched post, upload the fingerprint to
+                        (via Google Cloud Vision WEB_DETECTION + TEXT_DETECTION)
+                        to find matching posts/pages on the web
+  2.5 Selection    -> interactive console UI menu to pick candidate match
+  3. Blockchain     -> hash the selected post, upload fingerprint to
                         Ethereum Sepolia testnet, then re-verify it on-chain
 
 Usage:
@@ -100,16 +101,62 @@ def run_pipeline(face_image_path: str):
     step2_start = time.time()
     try:
         matches = reverse_image_search(face_image_path)
-        if not matches:
-            logger.warning("No web matches found for this photo. Image is not publicly indexed. Pipeline exiting gracefully.")
+        logger.info(f"✅ STEP 2 COMPLETED in {round(time.time() - step2_start, 2)}s")
+
+        text_signal = getattr(matches, "text_signal", None)
+        entity_guesses = getattr(matches, "entity_guesses", [])
+
+        # Display OCR text signal directly above the candidate menu
+        if text_signal:
+            print(f"\n🔤 Detected Text Signal: {text_signal}")
+        if entity_guesses:
+            print(f"💡 Related concepts detected: {', '.join(entity_guesses[:4])}")
+
+        # Filter valid selectable candidates (only items with real URLs)
+        selectable_candidates = [m for m in matches if m.get("link")]
+
+        if not selectable_candidates:
+            print("\n❌ No confident web matches found for this image — skipping blockchain upload.")
             return False
 
-        top_match = matches[0]
-        logger.info(f"✅ STEP 2 COMPLETED in {round(time.time() - step2_start, 2)}s ({len(matches)} matches found)")
-        print(f"   Top Matched Web Page:")
-        print(f"     Title:  {top_match['title']}")
-        print(f"     Source: {top_match['source']}")
-        print(f"     Link:   {top_match['link']}")
+        if len(selectable_candidates) == 1:
+            logger.info("Only one candidate found — auto-selecting.")
+            selected_match = selectable_candidates[0]
+        else:
+            print("\n" + "=" * 70)
+            print(f"  STEP 2 RESULTS — CANDIDATE MATCHES FOUND ({len(selectable_candidates)})")
+            print("=" * 70)
+            for idx, candidate in enumerate(selectable_candidates, 1):
+                tier_badge = "⭐ FULL MATCH   " if candidate.get("match_confidence_tier") == "full_match" else "◐ PARTIAL MATCH"
+                print(f"  [{idx}] {tier_badge} | {candidate.get('source')}")
+                print(f"      \"{candidate.get('title')}\"")
+                print(f"      {candidate.get('link')}\n")
+
+            selected_match = None
+            while selected_match is None:
+                try:
+                    user_input = input(f"Select a result to verify on-chain [1-{len(selectable_candidates)}], or 's' to skip blockchain upload: ").strip().lower()
+                    if user_input == 's':
+                        logger.info("Blockchain upload skipped by user choice.")
+                        return True
+                    if user_input.isdigit():
+                        choice_idx = int(user_input) - 1
+                        if 0 <= choice_idx < len(selectable_candidates):
+                            selected_match = selectable_candidates[choice_idx]
+                            logger.info(f"User selected Candidate [{user_input}]: '{selected_match['title']}' on {selected_match['source']}")
+                        else:
+                            print(f"Invalid choice. Please enter a number between 1 and {len(selectable_candidates)}, or 's'.")
+                    else:
+                        print(f"Invalid input. Please enter a number between 1 and {len(selectable_candidates)}, or 's'.")
+                except (KeyboardInterrupt, EOFError):
+                    print("\n\nSelection cancelled by user. Exiting pipeline.")
+                    return False
+
+        print(f"\n   Selected Matched Web Page:")
+        print(f"     Title:  {selected_match['title']}")
+        print(f"     Source: {selected_match['source']}")
+        print(f"     Link:   {selected_match['link']}")
+
     except Exception as e:
         log_fatal_bug("STEP 2: REVERSE WEB SEARCH", e)
         return False
@@ -120,7 +167,7 @@ def run_pipeline(face_image_path: str):
     print_step_header(3, "Blockchain Upload (Ethereum Sepolia Testnet)")
     step3_start = time.time()
     try:
-        upload_result = upload_record(top_match)
+        upload_result = upload_record(selected_match)
         logger.info(f"✅ STEP 3 COMPLETED in {round(time.time() - step3_start, 2)}s")
         print(f"   Keccak256 Content Hash: 0x{upload_result['content_hash']}")
         print(f"   Ethereum Tx Hash:       0x{upload_result['tx_hash']}")
@@ -137,7 +184,7 @@ def run_pipeline(face_image_path: str):
     print_step_header(4, "On-Chain Re-Verification")
     step4_start = time.time()
     try:
-        verification = verify_record(top_match)
+        verification = verify_record(selected_match)
         if verification:
             logger.info(f"✅ STEP 4 COMPLETED in {round(time.time() - step4_start, 2)}s")
             print("\n🎉 SUCCESS: Record verified 100% authentic on Ethereum Sepolia Blockchain:")
@@ -162,4 +209,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     run_pipeline(args.face)
-
